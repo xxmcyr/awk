@@ -34,6 +34,8 @@ THIS SOFTWARE.
 #include <math.h>
 #include "awk.h"
 
+extern int u8_nextlen(const char *s);
+
 char	EMPTY[] = { '\0' };
 FILE	*infile	= NULL;
 bool	innew;		/* true = infile has not been read by readrec */
@@ -301,6 +303,9 @@ void setclvar(char *s)	/* set var=value from s */
 	Cell *q;
 	double result;
 
+/* commit f3d9187d4e0f02294fb1b0e31152070506314e67 broke T.argv test */
+/* I don't understand why it was changed. */
+
 	for (p=s; *p != '='; p++)
 		;
 	e = p;
@@ -313,6 +318,7 @@ void setclvar(char *s)	/* set var=value from s */
 		q->tval |= NUM;
 	}
 	DPRINTF("command line set %s to |%s|\n", s, p);
+	free(p);
 	*e = '=';
 }
 
@@ -363,26 +369,56 @@ void fldbld(void)	/* create fields from current record */
 			*fr++ = 0;
 		}
 		*fr = 0;
-	} else if ((sep = *inputFS) == 0) {		/* new: FS="" => 1 char/field */
-		for (i = 0; *r != '\0'; r += n) {
-			char buf[MB_LEN_MAX + 1];
-
+	} else if ((sep = *inputFS) == ',') {	/* CSV processing.  no error handling */
+		for (;;) {
 			i++;
 			if (i > nfields)
 				growfldtab(i);
 			if (freeable(fldtab[i]))
 				xfree(fldtab[i]->sval);
-			n = mblen(r, MB_LEN_MAX);
-			if (n < 0)
-				n = 1;
-			memcpy(buf, r, n);
-			buf[n] = '\0';
+			fldtab[i]->sval = fr;
+			fldtab[i]->tval = FLD | STR | DONTFREE;
+			if (*r == '"' ) { /* start of "..." */
+				for (r++ ; *r != '\0'; ) {
+					if (*r == '"' && r[1] != '\0' && r[1] == '"') {
+						r += 2; /* doubled quote */
+						*fr++ = '"';
+					} else if (*r == '"' && (r[1] == '\0' || r[1] == ',')) {
+						r++; /* skip over closing quote */
+						break;
+					} else {
+						*fr++ = *r++;
+					}
+				}
+				*fr++ = 0;
+			} else {	/* unquoted field */
+				while (*r != ',' && *r != '\0')
+					*fr++ = *r++;
+				*fr++ = 0;
+			}
+			if (*r++ == 0)
+				break;
+
+		}
+		*fr = 0;
+	} else if ((sep = *inputFS) == 0) {	/* new: FS="" => 1 char/field */
+		for (i = 0; *r != '\0'; ) {
+			char buf[10];
+			i++;
+			if (i > nfields)
+				growfldtab(i);
+			if (freeable(fldtab[i]))
+				xfree(fldtab[i]->sval);
+			n = u8_nextlen(r);
+			for (j = 0; j < n; j++)
+				buf[j] = *r++;
+			buf[j] = '\0';
 			fldtab[i]->sval = tostring(buf);
 			fldtab[i]->tval = FLD | STR;
 		}
 		*fr = 0;
 	} else if (*r != 0) {	/* if 0, it's a null field */
-		/* subtlecase : if length(FS) == 1 && length(RS > 0)
+		/* subtle case: if length(FS) == 1 && length(RS > 0)
 		 * \n is NOT a field separator (cf awk book 61,84).
 		 * this variable is tested in the inner while loop.
 		 */
@@ -797,11 +833,11 @@ bool is_valid_number(const char *s, bool trailing_stuff_ok,
 	while (isspace(*s))
 		s++;
 
-	// no hex floating point, sorry
+	/* no hex floating point, sorry */
 	if (s[0] == '0' && tolower(s[1]) == 'x')
 		return false;
 
-	// allow +nan, -nan, +inf, -inf, any other letter, no
+	/* allow +nan, -nan, +inf, -inf, any other letter, no */
 	if (s[0] == '+' || s[0] == '-') {
 		is_nan = (strncasecmp(s+1, "nan", 3) == 0);
 		is_inf = (strncasecmp(s+1, "inf", 3) == 0);
@@ -835,7 +871,7 @@ convert:
 	if (no_trailing != NULL)
 		*no_trailing = (*ep == '\0');
 
-        // return true if found the end, or trailing stuff is allowed
+        /* return true if found the end, or trailing stuff is allowed */
 	retval = *ep == '\0' || trailing_stuff_ok;
 
 	return retval;

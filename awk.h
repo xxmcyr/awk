@@ -37,7 +37,7 @@ typedef double	Awkfloat;
 
 typedef	unsigned char uschar;
 
-#define	xfree(a)	{ if ((a) != NULL) { free((void *)(intptr_t)(a)); (a) = NULL; } }
+#define	xfree(a)	{ free((void *)(intptr_t)(a)); (a) = NULL; }
 /*
  * We sometimes cheat writing read-only pointers to NUL-terminate them
  * and then put back the original value
@@ -225,7 +225,8 @@ extern	int	pairstack[], paircnt;
 
 /* structures used by regular expression matching machinery, mostly b.c: */
 
-#define NCHARS	(256+3)		/* 256 handles 8-bit chars; 128 does 7-bit */
+#define NCHARS	(1256+3)		/* 256 handles 8-bit chars; 128 does 7-bit */
+				/* BUG: some overflows (caught) if we use 256 */
 				/* watch out in match(), etc. */
 #define	HAT	(NCHARS+2)	/* matches ^ in regular expr */
 #define NSTATES	32
@@ -236,12 +237,19 @@ typedef struct rrow {
 		int i;
 		Node *np;
 		uschar *up;
+		int *rp; /* rune representation of char class */
 	} lval;		/* because Al stores a pointer in it! */
 	int	*lfollow;
 } rrow;
 
+typedef struct gtt { /* gototab entry */
+	unsigned int ch;
+	unsigned int state;
+} gtt;
+
 typedef struct fa {
-	unsigned int	**gototab;
+	gtt	**gototab;
+	int	gototab_len;
 	uschar	*out;
 	uschar	*restr;
 	int	**posns;
